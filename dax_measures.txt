@@ -1,0 +1,182 @@
+/* ============================================================
+   Industrial Spare Parts Pricing & CM2 Profitability Analytics
+   DAX Measures Reference
+
+   Data model: fact_sales, fact_pricing + dim_material, dim_customer,
+   dim_sales_organization, dim_pricing_condition, dim_category_target,
+   dim_date (marked as Date Table).
+
+   Note: measure names in the dashboard screenshots may differ slightly
+   (e.g. underscores instead of spaces). The logic is identical.
+   ============================================================ */
+
+
+-- ============================================================
+-- 0. CALCULATED COLUMN (dim_date)
+-- Used on the X-axis of every monthly trend chart. Plotting the raw
+-- date gives one point per day (~730 points), which is unreadable.
+-- ============================================================
+
+Month Start =
+DATE(YEAR(dim_date[Date]), MONTH(dim_date[Date]), 1)
+
+
+-- ============================================================
+-- 1. CORE AGGREGATIONS
+-- ============================================================
+
+Total Revenue = SUM(fact_sales[Revenue])
+
+-- Cost = line total (Quantity x Standard Cost). Do NOT sum Standard_Cost,
+-- which is a per-unit value.
+Total Cost = SUM(fact_sales[Cost])
+
+Total CM2 = SUM(fact_sales[CM2])
+
+-- Revenue-weighted margin (SUM / SUM), not an average of row percentages.
+CM2 % =
+DIVIDE([Total CM2], [Total Revenue], 0)
+
+Average Selling Price = AVERAGE(fact_sales[Selling_Price])
+
+-- Discount_Percentage is stored as a whole number (12.5 = 12.5%),
+-- so divide by 100 before formatting the measure as a percentage.
+Average Discount % =
+DIVIDE(AVERAGE(fact_sales[Discount_Percentage]), 100)
+
+Transaction Count = COUNTROWS(fact_sales)
+
+
+-- ============================================================
+-- 2. NEGATIVE CM2 AND TARGET ACHIEVEMENT
+-- ============================================================
+
+Negative CM2 Transactions =
+CALCULATE(COUNTROWS(fact_sales), fact_sales[Negative_CM2_Flag] = "Yes")
+
+Negative CM2 % =
+DIVIDE([Negative CM2 Transactions], [Transaction Count], 0)
+
+-- Total CM2 lost on loss-making transactions
+Negative CM2 Amount =
+CALCULATE([Total CM2], fact_sales[Negative_CM2_Flag] = "Yes")
+
+Below Target Transactions =
+CALCULATE(COUNTROWS(fact_sales), fact_sales[Low_Margin_Flag] = "Yes")
+
+Target Achievement % =
+1 - DIVIDE([Below Target Transactions], [Transaction Count], 0)
+
+
+-- ============================================================
+-- 3. TARGET CM2
+-- Target_CM2_Percentage is stored as a whole number (32 = 32%).
+-- The "(Chart)" version rescales it to a decimal so it can share an
+-- axis with [CM2 %].
+-- ============================================================
+
+Target CM2 % = AVERAGE(fact_sales[Target_CM2_Percentage])
+
+Target CM2 % (Chart) =
+DIVIDE(AVERAGE(fact_sales[Target_CM2_Percentage]), 100)
+
+CM2 Achievement % =
+DIVIDE([CM2 %], [Target CM2 % (Chart)], 0)
+
+CM2 Gap vs Target =
+[CM2 %] - [Target CM2 % (Chart)]
+
+
+-- ============================================================
+-- 4. PRICE CHANGE % AND COST CHANGE % (fact_pricing)
+-- ============================================================
+
+Avg Price Change % =
+CALCULATE(
+    AVERAGE(fact_pricing[Price_Change_Percentage]),
+    fact_pricing[Change_Type] = "Price Change"
+)
+
+Avg Cost Change % =
+CALCULATE(
+    AVERAGE(fact_pricing[Cost_Change_Percentage]),
+    fact_pricing[Change_Type] = "Cost Change"
+)
+
+Unrecovered Cost Gap % =
+[Avg Cost Change %] - [Avg Price Change %]
+
+
+-- ============================================================
+-- 5. TIME INTELLIGENCE
+-- Requires dim_date to be marked as a Date Table.
+-- ============================================================
+
+Previous Month Revenue =
+CALCULATE([Total Revenue], DATEADD(dim_date[Date], -1, MONTH))
+
+Previous Month CM2 =
+CALCULATE([Total CM2], DATEADD(dim_date[Date], -1, MONTH))
+
+Revenue Growth % =
+DIVIDE([Total Revenue] - [Previous Month Revenue], [Previous Month Revenue], 0)
+
+CM2 Growth % =
+DIVIDE([Total CM2] - [Previous Month CM2], [Previous Month CM2], 0)
+
+
+-- ============================================================
+-- 6. PRICING DECISION MEASURES
+-- ============================================================
+
+Current Price = AVERAGE(fact_sales[Selling_Price])
+
+Standard Cost (Avg) = AVERAGE(fact_sales[Standard_Cost])
+
+Avg Previous Price = AVERAGE(fact_sales[Previous_Price])
+
+-- Simplified model: Standard Cost / (1 - Target Margin).
+-- Reads the raw column (whole number), so the /100 is correct here.
+-- Using [Target CM2 % (Chart)] inside this formula would divide by 100
+-- twice and produce a proposed price almost equal to cost.
+Proposed Price =
+DIVIDE(
+    AVERAGE(fact_sales[Standard_Cost]),
+    1 - AVERAGE(fact_sales[Target_CM2_Percentage]) / 100
+)
+
+-- Positive = priced above the proposed price; negative = underpriced.
+Price Gap = [Current Price] - [Proposed Price]
+
+Price Gap % = DIVIDE([Price Gap], [Proposed Price])
+
+-- Evaluated per material row in the pricing table.
+Price Revision Flag =
+IF([Price Gap] < 0, "Yes", "No")
+
+-- Counts materials (not transactions) whose average price is below the
+-- proposed price. CALCULATE forces the averages to be evaluated for each
+-- material inside the iterator; calling [Price Gap] directly inside
+-- SUMX returned 0 in testing because of nested-measure context.
+Materials Below Proposed Price =
+SUMX(
+    VALUES(dim_material[Material_ID]),
+    IF(
+        CALCULATE(AVERAGE(fact_sales[Selling_Price]))
+            <
+        DIVIDE(
+            CALCULATE(AVERAGE(fact_sales[Standard_Cost])),
+            1 - CALCULATE(AVERAGE(fact_sales[Target_CM2_Percentage])) / 100
+        ),
+        1,
+        0
+    )
+)
+
+-- Average of the per-material gaps (each material counts equally).
+Avg Price Gap per Material =
+AVERAGEX(VALUES(dim_material[Material_ID]), [Price Gap])
+
+-- CM2 earned on transactions that fall below their category target
+CM2 at Risk =
+CALCULATE([Total CM2], fact_sales[Low_Margin_Flag] = "Yes")

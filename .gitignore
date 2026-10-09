@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Dataset files — not tracked, for data security reasons.
+# Run python/01_generate_dataset.py locally to produce these.
+data/
+*.csv
+
