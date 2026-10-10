@@ -198,10 +198,3 @@ python 02_visualizations.py     # writes charts to charts/python_eda/
   transaction-level target achievement figure is shown alongside it.
 - No `.pbix` file is included, because an imported Power BI file embeds its
   data.
-
-## About Me
-
-I'm Saurav. I work on pricing and profitability analysis in the RAS
-Department at Rieter India Pvt. Ltd., mostly with SAP reports and Excel, and
-I'm moving into a Data Analyst role. This project is where I applied Power BI,
-SQL and Python to the kind of problem I see in my day-to-day work.
